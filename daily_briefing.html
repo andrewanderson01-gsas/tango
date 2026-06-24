@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚡ Energy Briefing</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8FAFC; color: #0F172A; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .fade { animation: fadein 0.3s ease; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #F1F5F9; } ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const URGENCY = {
+  "🔴": { label: "Film today",     bg: "#FEE2E2", bar: "#EF4444", text: "#991B1B" },
+  "🟡": { label: "Film this week", bg: "#FEF9C3", bar: "#EAB308", text: "#854D0E" },
+  "🟢": { label: "Evergreen",      bg: "#DCFCE7", bar: "#22C55E", text: "#166534" },
+};
+
+const SYSTEM_PROMPT = `You are a sharp, opinionated daily briefing editor for professionals in energy management, sustainability reporting, and utility bill payment. You scan the latest news and surface the top content/video opportunities for someone creating content in this niche.
+
+Respond ONLY with valid JSON, no markdown, no preamble, no trailing text. Schema:
+{
+  "date": "string",
+  "sourcesScanned": number,
+  "top3": [
+    {
+      "title": "string",
+      "score": number (out of 22),
+      "urgency": "🔴" or "🟡" or "🟢",
+      "whatHappened": "string (2-3 sentences, current news)",
+      "whyItMatters": "string (1 sentence)",
+      "hook": "string (punchy opening line, 5th-grade reading level)",
+      "angle": "string (how to frame the video)"
+    }
+  ],
+  "quickHits": ["string x4"],
+  "recommendation": "string (1-2 sentences, direct)"
+}
+
+Scoring (max 22): Buzz 1-5, Audience Fit 1-5, Timeliness 1-3, Content Gap 1-3, Visual Potential 1-3, Accessible 1-3. Only include items scoring 12+.
+
+Niche: energy management, sustainability reporting, utility bill payment. Audience: energy managers, sustainability leads, facilities professionals. Search for genuinely current news — do not reuse or fabricate topics. Each briefing must reflect real events happening now.`;
+
+// localStorage-based persistence
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem("eb_history") || "[]"); } catch { return []; }
+}
+function saveHistory(h) {
+  try { localStorage.setItem("eb_history", JSON.stringify(h)); } catch {}
+}
+
+function getTodayLabel() {
+  return new Date().toLocaleDateString("en-US", { weekday:"long", year:"numeric", month:"long", day:"numeric" });
+}
+
+function ScoreBadge({ score }) {
+  const pct = Math.round((score / 22) * 100);
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+      <div style={{ width:80, height:5, borderRadius:3, background:"#E2E8F0", overflow:"hidden" }}>
+        <div style={{ width:`${pct}%`, height:"100%", background:"#0F172A", borderRadius:3 }} />
+      </div>
+      <span style={{ fontFamily:"ui-monospace,monospace", fontSize:11, color:"#64748B" }}>{score}/22</span>
+    </div>
+  );
+}
+
+function UrgencyTag({ emoji }) {
+  const u = URGENCY[emoji] || URGENCY["🟢"];
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:u.bg, color:u.text, fontSize:11, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase" }}>
+      {emoji} {u.label}
+    </span>
+  );
+}
+
+function Card({ item, index }) {
+  const [open, setOpen] = useState(index === 0);
+  const u = URGENCY[item.urgency] || URGENCY["🟢"];
+  return (
+    <div style={{ background:"#fff", borderRadius:10, border:"1px solid #E2E8F0", overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,0.04)" }}>
+      <div style={{ height:3, background:u.bar }} />
+      <div style={{ padding:"16px 20px" }}>
+        <div onClick={() => setOpen(o => !o)} style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+              <span style={{ fontFamily:"ui-monospace,monospace", fontSize:10, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase" }}>#{index+1}</span>
+              <UrgencyTag emoji={item.urgency} />
+            </div>
+            <h3 style={{ margin:0, fontSize:15, fontWeight:700, color:"#0F172A", lineHeight:1.35 }}>{item.title}</h3>
+            <div style={{ marginTop:6 }}><ScoreBadge score={item.score} /></div>
+          </div>
+          <span style={{ color:"#94A3B8", fontSize:16, flexShrink:0, marginTop:2 }}>{open ? "▲" : "▼"}</span>
+        </div>
+        {open && (
+          <div className="fade" style={{ marginTop:16, display:"flex", flexDirection:"column", gap:14 }}>
+            <div>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>What happened</div>
+              <p style={{ margin:0, fontSize:13, color:"#334155", lineHeight:1.6 }}>{item.whatHappened}</p>
+            </div>
+            <div>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>Why it matters</div>
+              <p style={{ margin:0, fontSize:13, color:"#334155", lineHeight:1.6 }}>{item.whyItMatters}</p>
+            </div>
+            <div style={{ background:"#F8FAFC", borderLeft:"3px solid #0F172A", padding:"10px 14px", borderRadius:"0 6px 6px 0" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>Hook idea</div>
+              <p style={{ margin:0, fontSize:13, fontStyle:"italic", color:"#1E293B", lineHeight:1.55 }}>"{item.hook}"</p>
+            </div>
+            <div>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>Content angle</div>
+              <p style={{ margin:0, fontSize:13, color:"#334155", lineHeight:1.6 }}>{item.angle}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BriefingView({ briefing }) {
+  return (
+    <div className="fade">
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:8 }}>
+        <span style={{ fontSize:13, color:"#64748B" }}>{briefing.date}</span>
+        <span style={{ fontFamily:"ui-monospace,monospace", fontSize:11, color:"#94A3B8", background:"#F1F5F9", padding:"3px 8px", borderRadius:4 }}>{briefing.sourcesScanned} sources scanned</span>
+      </div>
+      <div style={{ marginBottom:24 }}>
+        <div style={{ fontSize:11, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:12 }}>Top Opportunities</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {briefing.top3.map((item, i) => <Card key={i} item={item} index={i} />)}
+        </div>
+      </div>
+      <div style={{ background:"#F8FAFC", borderRadius:10, padding:"16px 20px", border:"1px solid #E2E8F0", marginBottom:20 }}>
+        <div style={{ fontSize:11, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:12 }}>Quick Hits</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {briefing.quickHits.map((hit, i) => (
+            <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+              <span style={{ color:"#CBD5E1", fontWeight:700, flexShrink:0 }}>—</span>
+              <p style={{ margin:0, fontSize:13, color:"#475569", lineHeight:1.55 }}>{hit}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ background:"#0F172A", borderRadius:10, padding:"16px 20px" }}>
+        <div style={{ fontSize:10, fontWeight:700, color:"#475569", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:8 }}>My Recommendation</div>
+        <p style={{ margin:0, fontSize:14, color:"#F1F5F9", lineHeight:1.6, fontWeight:500 }}>{briefing.recommendation}</p>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [history, setHistory] = useState([]);
+  const [active, setActive] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState(null);
+  const [loadingMsg, setLoadingMsg] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const intervalRef = useRef(null);
+
+  const msgs = ["Scanning regulatory filings…","Checking industry news…","Scoring opportunities…","Writing your briefing…"];
+
+  useEffect(() => {
+    const h = loadHistory();
+    setHistory(h);
+    if (h.length > 0) setActive(h[0]);
+  }, []);
+
+  const alreadyToday = useCallback(() => {
+    return history.some(b => b.date === getTodayLabel());
+  }, [history]);
+
+  const generate = useCallback(async () => {
+    if (generating) return;
+    setGenerating(true);
+    setError(null);
+    let idx = 0;
+    setLoadingMsg(msgs[0]);
+    intervalRef.current = setInterval(() => {
+      idx = (idx + 1) % msgs.length;
+      setLoadingMsg(msgs[idx]);
+    }, 2200);
+
+    try {
+      const today = getTodayLabel();
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          system: SYSTEM_PROMPT,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+          messages: [{ role:"user", content:`Today is ${today}. Generate a fresh morning briefing. Search for real current news — do not fabricate or reuse old topics. Return only the JSON object.` }]
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+      if (!text) throw new Error("Empty response");
+      const clean = text.replace(/```json|```/g,"").trim();
+      const parsed = JSON.parse(clean);
+      parsed.date = parsed.date || today;
+      const newH = [parsed, ...history.filter(b=>b.date!==parsed.date)].slice(0,30);
+      setHistory(newH);
+      setActive(parsed);
+      saveHistory(newH);
+    } catch(e) {
+      setError("Couldn't generate briefing — " + (e.message || "try again in a moment."));
+    } finally {
+      clearInterval(intervalRef.current);
+      setGenerating(false);
+      setLoadingMsg("");
+    }
+  }, [generating, history]);
+
+  return (
+    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column" }}>
+      {/* Header */}
+      <div style={{ background:"#0F172A", padding:"14px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:10 }}>
+        <div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:18 }}>⚡</span>
+            <span style={{ color:"#F1F5F9", fontWeight:700, fontSize:15 }}>Energy Briefing</span>
+          </div>
+          <div style={{ color:"#475569", fontSize:11, marginTop:1, fontFamily:"ui-monospace,monospace" }}>Energy · Sustainability · Utility Bills</div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          {history.length > 0 && (
+            <button onClick={() => setShowHistory(h=>!h)} style={{ background:showHistory?"#1E3A5F":"transparent", border:"1px solid #334155", color:"#94A3B8", padding:"6px 12px", borderRadius:6, cursor:"pointer", fontSize:12, fontWeight:500 }}>
+              {showHistory ? "Hide" : `History (${history.length})`}
+            </button>
+          )}
+          <button onClick={generate} disabled={generating} style={{ background:generating?"#334155":alreadyToday()?"#1E3A5F":"#F59E0B", color:generating?"#64748B":alreadyToday()?"#93C5FD":"#0F172A", border:"none", padding:"6px 16px", borderRadius:6, cursor:generating?"not-allowed":"pointer", fontSize:12, fontWeight:700 }}>
+            {generating ? "Generating…" : alreadyToday() ? "↻ Refresh" : "▶ Run Today's Briefing"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", flex:1 }}>
+        {/* Sidebar */}
+        {showHistory && history.length > 0 && (
+          <div style={{ width:240, flexShrink:0, background:"#fff", borderRight:"1px solid #E2E8F0", padding:12, overflowY:"auto", maxHeight:"calc(100vh - 60px)", position:"sticky", top:60 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:"#94A3B8", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10, paddingLeft:4 }}>Past Briefings</div>
+            {history.map((b,i) => (
+              <div key={i} onClick={() => { setActive(b); setShowHistory(false); }} style={{ padding:"10px 12px", borderRadius:8, cursor:"pointer", background:active?.date===b.date?"#EFF6FF":"transparent", border:active?.date===b.date?"1px solid #BFDBFE":"1px solid transparent", marginBottom:4 }}>
+                <div style={{ fontSize:11, color:"#94A3B8", marginBottom:3, fontFamily:"ui-monospace,monospace" }}>{b.date}</div>
+                {b.top3?.[0] && <div style={{ fontSize:12, color:"#334155", fontWeight:500, lineHeight:1.35 }}>{b.top3[0].urgency} {b.top3[0].title.slice(0,50)}{b.top3[0].title.length>50?"…":""}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Main */}
+        <div style={{ flex:1, padding:"24px 20px 60px", maxWidth:680 }}>
+          {generating && (
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"80px 0", gap:16 }}>
+              <div style={{ width:36, height:36, borderRadius:"50%", border:"3px solid #E2E8F0", borderTopColor:"#F59E0B", animation:"spin 0.8s linear infinite" }} />
+              <div style={{ color:"#64748B", fontSize:13 }}>{loadingMsg}</div>
+            </div>
+          )}
+          {!generating && error && (
+            <div style={{ background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:8, padding:"14px 16px", color:"#991B1B", fontSize:13 }}>{error}</div>
+          )}
+          {!generating && !active && !error && (
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"80px 20px", textAlign:"center", gap:14 }}>
+              <div style={{ fontSize:40 }}>⚡</div>
+              <div style={{ fontSize:17, fontWeight:700, color:"#1E293B" }}>Your first briefing is one click away</div>
+              <div style={{ fontSize:13, color:"#64748B", maxWidth:340, lineHeight:1.7 }}>Hit <strong>Run Today's Briefing</strong> to scan the latest news and surface the top content opportunities for your niche.</div>
+              <button onClick={generate} style={{ marginTop:8, background:"#F59E0B", color:"#0F172A", border:"none", padding:"10px 22px", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:700 }}>▶ Run Today's Briefing</button>
+            </div>
+          )}
+          {!generating && active && <BriefingView briefing={active} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
